@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Gemini Gesture Particles</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        #video { 
+            position: absolute; bottom: 20px; right: 20px; width: 240px; 
+            border: 2px solid #00ffff; border-radius: 12px; transform: scaleX(-1);
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.4); z-index: 10;
+        }
+        #ui { 
+            position: absolute; top: 20px; left: 20px; color: #00ffff; 
+            text-transform: uppercase; letter-spacing: 2px; pointer-events: none;
+        }
+        .hint { font-size: 0.8rem; color: #555; margin-top: 5px; }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <div id="status">Detecting Hand...</div>
+        <div class="hint">0 Fingers: Cube | 1: Saturn | 2: Flower | 3: Star | 5: Sphere</div>
+        <div class="hint">Pinch Index + Thumb: Scale Up</div>
+    </div>
+    <video id="video" autoplay></video>
+
+    <script>
+        // --- SCENE SETUP ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const count = 8000;
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(count * 3);
+        const targetPositions = new Float32Array(count * 3);
+
+        for (let i = 0; i < count * 3; i++) {
+            positions[i] = (Math.random() - 0.5) * 10;
+        }
+
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        const material = new THREE.PointsMaterial({ 
+            color: 0x00ffff, size: 0.035, transparent: true, 
+            opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false 
+        });
+        const points = new THREE.Points(geometry, material);
+        scene.add(points);
+        camera.position.z = 6;
+
+        // --- SHAPE GENERATORS ---
+        function setSphere() {
+            for (let i = 0; i < count; i++) {
+                const phi = Math.acos(-1 + (2 * i) / count);
+                const theta = Math.sqrt(count * Math.PI) * phi;
+                targetPositions[i * 3] = 2.5 * Math.cos(theta) * Math.sin(phi);
+                targetPositions[i * 3 + 1] = 2.5 * Math.sin(theta) * Math.sin(phi);
+                targetPositions[i * 3 + 2] = 2.5 * Math.cos(phi);
+            }
+        }
+
+        function setSaturn() {
+            for (let i = 0; i < count; i++) {
+                if (i < count * 0.5) {
+                    const r = 1.5;
+                    const phi = Math.acos(-1 + (2 * i) / (count * 0.5));
+                    const theta = Math.sqrt(count * 0.5 * Math.PI) * phi;
+                    targetPositions[i * 3] = r * Math.cos(theta) * Math.sin(phi);
+                    targetPositions[i * 3 + 1] = r * Math.sin(theta) * Math.sin(phi);
+                    targetPositions[i * 3 + 2] = r * Math.cos(phi);
+                } else {
+                    const r = 2.5 + Math.random() * 1.2;
+                    const angle = Math.random() * Math.PI * 2;
+                    targetPositions[i * 3] = r * Math.cos(angle);
+                    targetPositions[i * 3 + 1] = (Math.random() - 0.5) * 0.15;
+                    targetPositions[i * 3 + 2] = r * Math.sin(angle);
+                }
+            }
+        }
+
+        function setFlower() {
+            const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+            for (let i = 0; i < count; i++) {
+                const r = 0.06 * Math.sqrt(i);
+                const theta = i * goldenAngle;
+                targetPositions[i * 3] = r * Math.cos(theta);
+                targetPositions[i * 3 + 1] = r * Math.sin(theta);
+                targetPositions[i * 3 + 2] = Math.sin(i * 0.1) * 0.5;
+            }
+        }
+
+        function setCube() {
+            for (let i = 0; i < count; i++) {
+                const axis = Math.floor(Math.random() * 3);
+                const side = Math.random() < 0.5 ? -1.5 : 1.5;
+                targetPositions[i * 3] = axis === 0 ? side : (Math.random() - 0.5) * 3;
+                targetPositions[i * 3 + 1] = axis === 1 ? side : (Math.random() - 0.5) * 3;
+                targetPositions[i * 3 + 2] = axis === 2 ? side : (Math.random() - 0.5) * 3;
+            }
+        }
+
+        function setStar() {
+            for (let i = 0; i < count; i++) {
+                const axis = Math.floor(Math.random() * 3);
+                const length = (Math.random() - 0.5) * 6;
+                targetPositions[i * 3] = axis === 0 ? length : (Math.random() - 0.5) * 0.2;
+                targetPositions[i * 3 + 1] = axis === 1 ? length : (Math.random() - 0.5) * 0.2;
+                targetPositions[i * 3 + 2] = axis === 2 ? length : (Math.random() - 0.5) * 0.2;
+            }
+        }
+
+        // --- HAND TRACKING LOGIC ---
+        const videoElement = document.getElementById('video');
+        const statusText = document.getElementById('status');
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7 });
+
+        hands.onResults((results) => {
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const hand = results.multiHandLandmarks[0];
+                
+                // Finger counting logic
+                const fingerTips = [8, 12, 16, 20];
+                let upCount = 0;
+                fingerTips.forEach(tip => { if (hand[tip].y < hand[tip - 2].y) upCount++; });
+
+                // Shape selection based on finger count
+                if (upCount === 0) { setCube(); statusText.innerText = "Shape: Cube"; }
+                else if (upCount === 1) { setSaturn(); statusText.innerText = "Shape: Saturn"; }
+                else if (upCount === 2) { setFlower(); statusText.innerText = "Shape: Flower"; }
+                else if (upCount === 3) { setStar(); statusText.innerText = "Shape: Star"; }
+                else { setSphere(); statusText.innerText = "Shape: Sphere"; }
+
+                // Pinch detection for Scaling
+                const dist = Math.hypot(hand[8].x - hand[4].x, hand[8].y - hand[4].y);
+                const scaleVal = dist < 0.05 ? 2.0 : 1.0;
+                points.scale.lerp(new THREE.Vector3(scaleVal, scaleVal, scaleVal), 0.1);
+            }
+        });
+
+        const cameraFeed = new Camera(videoElement, {
+            onFrame: async () => { await hands.send({image: videoElement}); },
+            width: 640, height: 480
+        });
+        cameraFeed.start();
+
+        // --- ANIMATION LOOP ---
+        function animate() {
+            requestAnimationFrame(animate);
+            const posAttr = geometry.attributes.position;
+            for (let i = 0; i < count * 3; i++) {
+                posAttr.array[i] += (targetPositions[i] - posAttr.array[i]) * 0.1; // Smooth morphing
+            }
+            posAttr.needsUpdate = true;
+            points.rotation.y += 0.005;
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        setSphere();
+        animate();
+    </script>
+</body>
+</html>
